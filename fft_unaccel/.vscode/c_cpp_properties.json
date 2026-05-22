@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "name": "RI5CY-FixedPoint",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/kissfft",
+                "${workspaceFolder}/kissfft/tools"
+            ],
+            "defines": [
+                "FIXED_POINT=32",
+                "KISS_FFT_BUILD=1",
+                "KISS_FFT_MALLOC(n)=NULL",
+                "KISS_FFT_FREE(p)={}",
+                "KISS_FFT_SHARED=1"
+            ],
+            "compilerPath": "/opt/riscv/bin/riscv32-unknown-elf-gcc",
+            "cStandard": "c11",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-arm",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}
