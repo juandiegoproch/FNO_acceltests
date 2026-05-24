@@ -13,8 +13,8 @@ KISS_LIB = $(KISS_DIR)/libkissfft-int32_t.a
 
 # Compiler flags 
 # REMOVED -specs from here so it isn't parsed twice
-CFLAGS  = -march=rv64imafd -mabi=lp64d -mcmodel=medany \
-          -O2 -Wall -g -fno-common \
+CFLAGS  = -march=rv64imafdc -mabi=lp64d -mcmodel=medany \
+          -O0 -Wall -g -fno-common \
           -I$(KISS_DIR) \
           -DFIXED_POINT=32 \
           -DKISS_FFT_MALLOC=malloc_is_forbidden \
