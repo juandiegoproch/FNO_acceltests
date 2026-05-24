@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdalign.h>
-#include "kiss_fft.h"
-#include "kiss_fftndr.h"
+#include <stdlib.h> // Added for exit()
+#include "kissfft/kiss_fft.h"
+#include "kissfft/kiss_fftndr.h"
 
 #define TRUE 1
 #define FALSE 0
@@ -24,6 +25,13 @@ int32_t oned_buffer[ONE_DIM_FFT_SIZE];
 kiss_fft_cpx oned_buffer_fft[ONE_DIM_FFT_SIZE];
 alignas(32) uint8_t oned_fft_scratchpad[SCRATCHPAD_BUFFER_SIZE];
 
+// Added definition to satisfy KissFFT macro overrides
+void* malloc_is_forbidden(size_t size) {
+    printf("ERROR: KissFFT attempted dynamic allocation of %ld bytes!\n", size);
+    exit(1);
+    return NULL;
+}
+
 void populateChannel(int32_t* channel){
     for (int i=0; i<CHANNEL_SIZE;i++){
         for (int j=0;j<CHANNEL_SIZE;j++){
@@ -40,35 +48,35 @@ int main() {
 
     uint64_t instructions_start,instructions_end;
     uint64_t clock_cycles_start,clock_cycles_end;
-    // write 0 to avoid garbage in most significant word
+    
     instructions_start = instructions_end = 0;
     clock_cycles_start = clock_cycles_end = 0;
 
     asm volatile ("csrw 0x320, 0");
 
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_start));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_start + 1)));
+    // Fixed 64-bit inline assembly
+    asm volatile ("rdcycle %0" : "=r" (clock_cycles_start));
 
     kiss_fftndr_cfg channel_fft_config = kiss_fftndr_alloc(dims,2,FALSE,fft_scratchpad,&scratchpad_size);
     kiss_fftndr_cfg channel_ifft_config = kiss_fftndr_alloc(dims,2,TRUE,ifft_scratchpad,&scratchpad_size);
 
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_end));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_end + 1)));
+    asm volatile ("rdcycle %0"   : "=r" (clock_cycles_end));
+    asm volatile ("rdinstret %0" : "=r" (instructions_end));
 
-    asm volatile ("rdinstret %0"  : "=r" (*(uint32_t*)&instructions_end));
-    asm volatile ("rdinstreth %0" : "=r" (*((uint32_t*)&instructions_end + 1)));
+    if (((clock_cycles_end - clock_cycles_start) >> 32) | ((instructions_end - instructions_start) >> 32))
+        printf("\n[WARNING] Counters exceeded 32-bit limit!\n");
 
-    printf("All done with fft setup! \n cycles: %lld, instructions: %lld \n",
-            clock_cycles_end-clock_cycles_start,
-            instructions_end-instructions_start);
+    printf("All done with fft setup! \n cycles: %u, instructions: %u \n",
+                (uint32_t)(clock_cycles_end - clock_cycles_start),
+                (uint32_t)(instructions_end - instructions_start));
 
     kiss_fftr_cfg oned_fft = kiss_fftr_alloc(ONE_DIM_FFT_SIZE,FALSE,oned_fft_scratchpad,&oned_scratchpad_size);
     if (oned_fft == NULL){
-        printf("Buffer is to small. Current size %d, required size %d \n",SCRATCHPAD_BUFFER_SIZE,scratchpad_size);
+        printf("Buffer is to small. Current size %d, required size %ld \n",SCRATCHPAD_BUFFER_SIZE,scratchpad_size);
         exit(0);
     }
     if (channel_fft_config == NULL){
-        printf("Buffer is to small. Current size %d, required size %d \n",SCRATCHPAD_BUFFER_SIZE,scratchpad_size);
+        printf("Buffer is to small. Current size %d, required size %ld \n",SCRATCHPAD_BUFFER_SIZE,scratchpad_size);
         exit(0);
     }
     printf("Finished allocation of configs \n");
@@ -79,54 +87,23 @@ int main() {
 
     asm volatile ("csrw 0x320, 0");
 
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_start));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_start + 1)));
-
-    asm volatile ("rdinstret %0"  : "=r" (*(uint32_t*)&instructions_start));
-    asm volatile ("rdinstreth %0" : "=r" (*((uint32_t*)&instructions_start + 1)));
+    asm volatile ("rdcycle %0"   : "=r" (clock_cycles_start));
+    asm volatile ("rdinstret %0" : "=r" (instructions_start));
 
     for (int c=0; c<CHANNEL_COUNT; c++){
         kiss_fftndr(channel_fft_config,(int32_t*)&channels_buffer[c],(kiss_fft_cpx*)&channels_buffer_fft[c]);
         kiss_fftndri(channel_ifft_config,(kiss_fft_cpx*)&channels_buffer_fft[c],(int32_t*)&channels_buffer[c]);
     }
 
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_end));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_end + 1)));
+    asm volatile ("rdcycle %0"   : "=r" (clock_cycles_end));
+    asm volatile ("rdinstret %0" : "=r" (instructions_end));
 
-    asm volatile ("rdinstret %0"  : "=r" (*(uint32_t*)&instructions_end));
-    asm volatile ("rdinstreth %0" : "=r" (*((uint32_t*)&instructions_end + 1)));
+    if (((clock_cycles_end - clock_cycles_start) >> 32) | ((instructions_end - instructions_start) >> 32))
+        printf("\n[WARNING] Counters exceeded 32-bit limit!\n");
 
+    printf("All done with ffts! \n cycles: %u, instructions: %u \n",
+            (uint32_t)(clock_cycles_end - clock_cycles_start),
+            (uint32_t)(instructions_end - instructions_start));
 
-    printf("All done with ffts! \n cycles: %lld, instructions: %lld \n",
-            clock_cycles_end-clock_cycles_start,
-            instructions_end-instructions_start);
-    /*
-    // We do a 6144 FFT as a sanity check
-    printf("Performing large one d fft \n");
-    scratchpad_size = SCRATCHPAD_BUFFER_SIZE;
-    for (int i=0; i<ONE_DIM_FFT_SIZE; i++) oned_buffer[i] = i;
-    printf("Populated... \n");
-
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_start));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_start + 1)));
-
-    asm volatile ("rdinstret %0"  : "=r" (*(uint32_t*)&instructions_start));
-    asm volatile ("rdinstreth %0" : "=r" (*((uint32_t*)&instructions_start + 1)));
-
-    // Perform the Large 1D FFT
-    kiss_fftr(oned_fft, (int32_t*)oned_buffer, (kiss_fft_cpx*)oned_buffer_fft);
-
-    // --- END MEASUREMENT ---
-    asm volatile ("rdcycle %0"    : "=r" (*(uint32_t*)&clock_cycles_end));
-    asm volatile ("rdcycleh %0"   : "=r" (*((uint32_t*)&clock_cycles_end + 1)));
-
-    asm volatile ("rdinstret %0"  : "=r" (*(uint32_t*)&instructions_end));
-    asm volatile ("rdinstreth %0" : "=r" (*((uint32_t*)&instructions_end + 1)));
-
-
-    printf("All done with large 1d fft! \n cycles: %lld, instructions: %lld \n",
-            clock_cycles_end-clock_cycles_start,
-            instructions_end-instructions_start);
-    */
     return 0;
 }

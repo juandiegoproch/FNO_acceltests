@@ -1,0 +1,7 @@
+# Block compiled object archives and libraries
+*.a
+*.o
+
+# Block RISC-V specific binaries and execution ELFs
+*.riscv
+*.elf
