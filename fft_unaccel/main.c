@@ -8,7 +8,7 @@
 #define TRUE 1
 #define FALSE 0
 #define ONE_DIM_FFT_SIZE 0
-#define CHANNEL_SIZE 32
+#define CHANNEL_SIZE 16
 #define CHANNEL_COUNT 24
 #define SCRATCHPAD_BUFFER_SIZE 62000 
 #define FIXED_POINT_SHIFT 15

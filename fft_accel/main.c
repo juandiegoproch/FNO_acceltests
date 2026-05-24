@@ -7,16 +7,23 @@
 #define TRUE 1
 #define FALSE 0
 #define ONE_DIM_FFT_SIZE 0
+
+// You can now change this to 16, 8, etc. The HW will handle it via zero-padding.
 #define CHANNEL_SIZE 32
 #define CHANNEL_COUNT 24
 #define SCRATCHPAD_BUFFER_SIZE 62000 
+
+#define HW_DIM 32
+#define TOTAL_HW_POINTS (HW_DIM * HW_DIM)
+
 #define FIXED_POINT_SHIFT 16 // Adjusted for Q15.16
 
 alignas(32) uint8_t fft_scratchpad[SCRATCHPAD_BUFFER_SIZE];
 alignas(32) uint8_t ifft_scratchpad[SCRATCHPAD_BUFFER_SIZE];
 
 // Swapped to hardware-mapped complex type to keep memory contiguous
-alignas(32) cpx_32bq16_accel channels_buffer[CHANNEL_COUNT][CHANNEL_SIZE * CHANNEL_SIZE];
+// Buffer size is fixed to TOTAL_HW_POINTS (1024) to satisfy hardware requirements
+alignas(32) cpx_32bq16_accel channels_buffer[CHANNEL_COUNT][TOTAL_HW_POINTS];
 
 void* malloc_is_forbidden(size_t size) {
     printf("ERROR: KissFFT attempted dynamic allocation of %ld bytes!\n", size);
@@ -26,11 +33,21 @@ void* malloc_is_forbidden(size_t size) {
 
 // Minimal change: Just cast to the new struct type
 void populateChannel(cpx_32bq16_accel* channel){
-    for (int i=0; i<CHANNEL_SIZE;i++){
-        for (int j=0;j<CHANNEL_SIZE;j++){
-            int32_t val = (i + j) << FIXED_POINT_SHIFT;
-            channel[i + j * CHANNEL_SIZE].r = (uint32_t)val;
-            channel[i + j * CHANNEL_SIZE].i = 0;
+    for (int r = 0; r < HW_DIM; r++) {
+        for (int c = 0; c < HW_DIM; c++) {
+            int hw_index = r * HW_DIM + c;
+            
+            // Map the smaller CHANNEL_SIZE into the fixed 32x32 hardware window
+            if (r < CHANNEL_SIZE && c < CHANNEL_SIZE) {
+                // Original logic: (i + j) << FIXED_POINT_SHIFT
+                int32_t val = (r + c) << FIXED_POINT_SHIFT;
+                channel[hw_index].r = (uint32_t)val;
+                channel[hw_index].i = 0;
+            } else {
+                // Zero-pad the remaining hardware capacity to prevent stalls
+                channel[hw_index].r = 0;
+                channel[hw_index].i = 0;
+            }
         }
     }
 }
