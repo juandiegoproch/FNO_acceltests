@@ -1,0 +1,1 @@
+taken from "/home/juan-prochazka/Desktop/chipyard/generators/gemmini/software/gemmini-rocc-tests/riscv-tests/benchmarks/common" on gemmini commit 7c540b3adf1b86ad93d07f893abe3a73489b568e
