@@ -36,7 +36,7 @@
 #include "include/gemmini_testutils.h"
 
 #ifndef SZCH
-#define SZCH 4
+#define SZCH 32
 #endif
 #define L      (SZCH * SZCH)
 #define CIN0   24

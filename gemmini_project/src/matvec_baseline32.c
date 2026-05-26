@@ -40,7 +40,7 @@
 
 /* ---- Malla parametrizable: se puede sobreescribir con -DSZCH=... ---------- */
 #ifndef SZCH
-#define SZCH 4
+#define SZCH 32
 #endif
 #define L      (SZCH * SZCH)     /* posiciones espaciales */
 #define CIN0   24
