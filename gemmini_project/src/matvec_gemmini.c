@@ -1,30 +1,29 @@
 /* matvec_gemmini.c — Versión ACELERADA con Gemmini de la MISMA operación que
  * matvec_baseline.c. Mismas dimensiones, mismo formato int8, MISMOS valores,
- * misma instrumentación => comparación directa de clock cycles.
+ * misma instrumentación (cycles + instret) => comparación directa.
+ * [VERSIÓN PARAMETRIZABLE + cycles & instret]
  *
  * OPERACIÓN (idéntica al baseline)
  *   Capa 1:  C1[L][CMID] = A0[L][CIN0] * W1[CIN0][CMID]   (24 -> 12)
  *   Capa 2:  C2[L][COUT] = C1[L][CMID] * W2[CMID][COUT]   (12 -> 24)
- *   Apilado en I = L (las L posiciones espaciales como filas del GEMM).
- *   SIN bias, SIN GELU (mismas omisiones que el baseline).
+ *   Apilado en I = L. SIN bias, SIN GELU.
  *
- * MAPEO A tiled_matmul_auto(dim_I, dim_J, dim_K, A, B, D, C, strideA, strideB,
- *                           strideD, strideC, ...)
- *   Capa 1:  dim_I=L, dim_J=CMID, dim_K=CIN0
- *            A=A0 [L x CIN0], B=W1 [CIN0 x CMID], C=C1 [L x CMID]
- *            strides: A=CIN0, B=CMID, D=CMID, C=CMID
- *   Capa 2:  dim_I=L, dim_J=COUT, dim_K=CMID
- *            A=C1 [L x CMID], B=W2 [CMID x COUT], C=C2 [L x COUT]
- *            strides: A=CMID, B=COUT, D=COUT, C=COUT
- *   B en layout [K x J] (lo que Gemmini espera). Sin bias => D=NULL, NO_BIAS.
- *   NO_ACTIVATION, escalas IDENTITY. Dataflow WS (weight-stationary).
+ * MAPEO A tiled_matmul_auto(dim_I, dim_J, dim_K, A, B, D, C,
+ *                           strideA, strideB, strideD, strideC, ...)
+ *   Capa 1: dim_I=L, dim_J=CMID, dim_K=CIN0; A=A0, B=W1, C=C1
+ *   Capa 2: dim_I=L, dim_J=COUT, dim_K=CMID; A=C1, B=W2, C=C2
+ *   B en layout [K x J]. Sin bias => D=NULL. NO_ACTIVATION, escalas IDENTITY, WS.
  *
- * NOTA: Gemmini DIM=16. Como CIN0=24, CMID=12, COUT=24 no son múltiplos de 16,
- * tiled_matmul_auto los rellena internamente (24->32, 12->16). El padding es
- * trabajo ocioso esperado del array sistólico para matrices pequeñas; se
- * reporta como caracterización, no es un error.
+ * PADDING: Gemmini DIM=16; CIN0=24 y CMID=12 no son múltiplos de 16, así que
+ * tiled_matmul_auto rellena (24->32, 12->16). Trabajo ocioso esperado del array
+ * para matrices pequeñas; se reporta como caracterización.
  *
- * BUILD / RUN: dejar en gemmini_project/src/, make, y correr igual que main.c.
+ * NOTA sobre instret en el lado Gemmini: el core retira las instrucciones RoCC
+ * que despachan el trabajo al acelerador, NO las MACs internas del array. Por
+ * eso instret será MUCHO menor que en el baseline; eso es justamente lo que
+ * evidencia el offload al acelerador.
+ *
+ * PARAMETRIZACIÓN: igual que el baseline, -DSZCH=16 / -DSZCH=32 (ver build).
  */
 
 #include <stdint.h>
@@ -36,13 +35,22 @@
 #endif
 #include "include/gemmini_testutils.h"
 
-#define SZCH   4
-#define L      (SZCH * SZCH)     /* 16 */
+#ifndef SZCH
+#define SZCH 4
+#endif
+#define L      (SZCH * SZCH)
 #define CIN0   24
 #define CMID   12
 #define COUT   24
 
-#define HEAP_SIZE (4 * 1024 * 1024)
+#define HEAP_SIZE (8 * 1024 * 1024)
+
+/* Lectura de instret de 64 bits, simétrica a read_cycles() (misma que baseline). */
+static inline uint64_t read_instret(void) {
+    uint64_t x;
+    asm volatile ("rdinstret %0" : "=r" (x));
+    return x;
+}
 
 int main(void) {
 #ifndef BAREMETAL
@@ -79,7 +87,8 @@ int main(void) {
     gemmini_flush(0);
 
     /* ===================== VENTANA DE MEDICIÓN ========================= */
-    uint64_t start = read_cycles();
+    uint64_t c_start = read_cycles();
+    uint64_t i_start = read_instret();
 
     /* Capa 1: [L x CMID] = [L x CIN0] * [CIN0 x CMID] */
     tiled_matmul_auto(
@@ -108,12 +117,22 @@ int main(void) {
         WS);
 
     gemmini_fence();   /* asegurar que todas las ops RoCC terminaron antes de leer cycle */
-    uint64_t end = read_cycles();
+
+    uint64_t i_end = read_instret();
+    uint64_t c_end = read_cycles();
     /* =================== FIN VENTANA DE MEDICIÓN ======================= */
 
-    printf("Gemmini matvec took %llu cycles\n\n", (unsigned long long)(end - start));
+    uint64_t cycles  = c_end - c_start;
+    uint64_t instret = i_end - i_start;
+    printf("Gemmini matvec: %llu cycles, %llu instructions\n",
+           (unsigned long long)cycles, (unsigned long long)instret);
+    if (cycles > 0)
+        printf("IPC = %d.%03d\n",
+               (int)(instret / cycles),
+               (int)(((instret * 1000) / cycles) % 1000));
+    printf("\n");
 
-    /* Verificación: misma salida esperada que el baseline => C2[i][j] = 12*(i%8). */
+    /* Verificación: misma salida esperada que el baseline => C2[i][j] = CMID*(i%8). */
     int ok = 1;
     for (int i = 0; i < L && ok; ++i) {
         elem_t expected = (elem_t)(CMID * (i % 8));
@@ -122,14 +141,16 @@ int main(void) {
     }
     printf("Verificacion (vs salida analitica del baseline): %s\n", ok ? "PASS" : "FAIL");
 
-    printf("C2[fila 0]  col0..3 = %d %d %d %d  (esperado 0)\n",
+    printf("C2[fila 0] col0..3 = %d %d %d %d  (esperado 0)\n",
            (int)C2[0], (int)C2[1], (int)C2[2], (int)C2[3]);
-    printf("C2[fila 5]  col0..3 = %d %d %d %d  (esperado 60)\n",
-           (int)C2[(size_t)5*COUT+0], (int)C2[(size_t)5*COUT+1],
-           (int)C2[(size_t)5*COUT+2], (int)C2[(size_t)5*COUT+3]);
-    printf("C2[fila 15] col0..3 = %d %d %d %d  (esperado 84)\n",
-           (int)C2[(size_t)15*COUT+0], (int)C2[(size_t)15*COUT+1],
-           (int)C2[(size_t)15*COUT+2], (int)C2[(size_t)15*COUT+3]);
+    if (L > 5)
+        printf("C2[fila 5] col0..3 = %d %d %d %d  (esperado 60)\n",
+               (int)C2[(size_t)5*COUT+0], (int)C2[(size_t)5*COUT+1],
+               (int)C2[(size_t)5*COUT+2], (int)C2[(size_t)5*COUT+3]);
+    printf("C2[fila %d] col0..3 = %d %d %d %d  (esperado %d)\n", L-1,
+           (int)C2[(size_t)(L-1)*COUT+0], (int)C2[(size_t)(L-1)*COUT+1],
+           (int)C2[(size_t)(L-1)*COUT+2], (int)C2[(size_t)(L-1)*COUT+3],
+           CMID * ((L-1) % 8));
 
     printf("\n=== Fin Gemmini ===\n");
     return ok ? 0 : 1;

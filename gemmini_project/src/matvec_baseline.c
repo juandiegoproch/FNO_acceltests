@@ -1,34 +1,32 @@
 /* matvec_baseline.c — Baseline BARE-METAL (sin acelerar) de la operación
- * matriz-vector del ChannelMLP de un FNO.   [VERSIÓN AJUSTADA: sin saturación]
+ * matriz-vector del ChannelMLP de un FNO.
+ * [VERSIÓN PARAMETRIZABLE + cycles & instret]
  *
  * QUÉ MIDE
  *   La mezcla de canales del ChannelMLP, abstraída y aislada:
  *     - Capa 1:  CIN0 -> CMID   (24 -> 12)
  *     - Capa 2:  CMID -> COUT   (12 -> 24)
  *   Expresada como GEMM apilando las L posiciones espaciales en el eje de filas
- *   (I = L), que es la forma justa de compararla contra Gemmini (mismo trabajo,
- *   misma granularidad).
+ *   (I = L), forma justa de compararla contra Gemmini (mismo trabajo, misma
+ *   granularidad).
  *
  * QUÉ OMITE A PROPÓSITO (presente en el FNO real, NO medido aquí)
- *     [OMIT-1] bias de la capa 1
- *     [OMIT-2] activación GELU entre capa 1 y capa 2
- *     [OMIT-3] bias de la capa 2
+ *     [OMIT-1] bias capa 1   [OMIT-2] GELU entre capas   [OMIT-3] bias capa 2
  *
- * FORMATO NUMÉRICO
+ * FORMATO
  *   int8 entradas/pesos (elem_t), acumulador int32 (acc_t). Datatype estándar
- *   de la instancia Gemmini del proyecto (LeanGemminiConfig). MISMO formato y
- *   MISMOS valores que matvec_gemmini.c, para poder verificar salida idéntica.
+ *   de la instancia Gemmini del proyecto. MISMO formato y MISMOS valores que
+ *   matvec_gemmini.c => salida idéntica, comparación directa de cycles+instret.
  *
- * VALORES (elegidos para NO saturar y dar salidas distinguibles por fila)
- *   W1 = W2 = 1 (todos unos).
- *   Entrada A0: la fila i tiene exactamente (i % 8) unos al principio y 0 el
- *   resto. Entonces:
- *     C1[i][j] = sum_k A0[i][k] = (i % 8)               (igual para todo j)
- *     C2[i][j] = sum_k C1[i][k] = CMID * (i % 8) = 12*(i%8)  ->  {0,12,...,84}
- *   Todos <= 127: NINGUNA saturación. Cada fila da un valor distinto => la
- *   verificación distingue de verdad (no es todo 127 como en la versión previa).
+ * PARAMETRIZACIÓN DE LA MALLA (SZCH -> L = SZCH*SZCH)
+ *   Por defecto SZCH=4 (L=16). Para barrer tamaños sin editar el archivo, se
+ *   puede definir en compilación:  -DSZCH=16  (L=256)  o  -DSZCH=32 (L=1024).
+ *   Ver nota de build al pie.
  *
- * BUILD / RUN: idéntico a main.c (dejar en gemmini_project/src/, make, run).
+ * VALORES (elegidos para NO saturar y dar una salida distinta por fila)
+ *   W1 = W2 = 1. La fila i de A0 tiene (i % 8) unos al principio y 0 el resto:
+ *     C1[i][j] = (i % 8)            (igual para todo j)
+ *     C2[i][j] = CMID * (i % 8)     -> {0,12,...,84}  (<=127, sin saturación)
  */
 
 #include <stdint.h>
@@ -40,13 +38,26 @@
 #endif
 #include "include/gemmini_testutils.h"   /* elem_t (int8), acc_t (int32), read_cycles() */
 
-#define SZCH   4                 /* lado de la malla espacial */
-#define L      (SZCH * SZCH)     /* posiciones espaciales = 16 */
+/* ---- Malla parametrizable: se puede sobreescribir con -DSZCH=... ---------- */
+#ifndef SZCH
+#define SZCH 4
+#endif
+#define L      (SZCH * SZCH)     /* posiciones espaciales */
 #define CIN0   24
 #define CMID   12
 #define COUT   24
 
-#define HEAP_SIZE (4 * 1024 * 1024)
+#define HEAP_SIZE (8 * 1024 * 1024)   /* 8 MB: holgado incluso para SZCH=32 (L=1024) */
+
+/* ---- Lectura de instret de 64 bits, simétrica a read_cycles() ------------- *
+ * read_cycles() (de gemmini_testutils.h) hace `rdcycle`. Aquí el equivalente
+ * para instrucciones retiradas. Mismo estilo, para paridad exacta con la
+ * versión Gemmini. */
+static inline uint64_t read_instret(void) {
+    uint64_t x;
+    asm volatile ("rdinstret %0" : "=r" (x));
+    return x;
+}
 
 /* GEMM plano: C[I][J] = A[I][K] * B[K][J], int8 con acumulador int32,
  * saturando la salida a int8 (igual que el datapath de Gemmini accType->inputType).
@@ -87,7 +98,7 @@ int main(void) {
         if (end >= &heap[HEAP_SIZE]) { printf("ERROR: no cabe en el heap\n"); exit(1); }
     }
 
-    /* Inicialización: ver cabecera. Fila i con (i%8) unos; pesos todos 1. */
+    /* Inicialización: fila i con (i%8) unos; pesos todos 1. */
     for (int i = 0; i < L; ++i) {
         int ones = i % 8;
         for (int k = 0; k < CIN0; ++k)
@@ -99,17 +110,29 @@ int main(void) {
         for (int j = 0; j < COUT; ++j) W2[(size_t)k * COUT + j] = (elem_t)1;
 
     /* ===================== VENTANA DE MEDICIÓN ========================= */
-    uint64_t start = read_cycles();
+    uint64_t c_start = read_cycles();
+    uint64_t i_start = read_instret();
+
     gemm_plain(A0, W1, C1, L, CMID, CIN0);   /* Capa 1 */
     /* [OMIT-1] bias1 ; [OMIT-2] GELU(C1) */
     gemm_plain(C1, W2, C2, L, COUT, CMID);   /* Capa 2 */
     /* [OMIT-3] bias2 */
-    uint64_t end = read_cycles();
+
+    uint64_t i_end = read_instret();
+    uint64_t c_end = read_cycles();
     /* =================== FIN VENTANA DE MEDICIÓN ======================= */
 
-    printf("Baseline matvec took %llu cycles\n\n", (unsigned long long)(end - start));
+    uint64_t cycles  = c_end - c_start;
+    uint64_t instret = i_end - i_start;
+    printf("Baseline matvec: %llu cycles, %llu instructions\n",
+           (unsigned long long)cycles, (unsigned long long)instret);
+    if (cycles > 0)
+        printf("IPC = %d.%03d\n",
+               (int)(instret / cycles),
+               (int)(((instret * 1000) / cycles) % 1000));
+    printf("\n");
 
-    /* Verificación analítica: C2[i][j] esperado = 12*(i%8). */
+    /* Verificación analítica: C2[i][j] esperado = CMID*(i%8). */
     int ok = 1;
     for (int i = 0; i < L && ok; ++i) {
         elem_t expected = (elem_t)(CMID * (i % 8));   /* <=84, no satura */
@@ -118,14 +141,16 @@ int main(void) {
     }
     printf("Verificacion CPU: %s\n", ok ? "PASS" : "FAIL");
 
-    printf("C2[fila 0]  col0..3 = %d %d %d %d  (esperado 0)\n",
+    printf("C2[fila 0] col0..3 = %d %d %d %d  (esperado 0)\n",
            (int)C2[0], (int)C2[1], (int)C2[2], (int)C2[3]);
-    printf("C2[fila 5]  col0..3 = %d %d %d %d  (esperado 60)\n",
-           (int)C2[(size_t)5*COUT+0], (int)C2[(size_t)5*COUT+1],
-           (int)C2[(size_t)5*COUT+2], (int)C2[(size_t)5*COUT+3]);
-    printf("C2[fila 15] col0..3 = %d %d %d %d  (esperado 84)\n",
-           (int)C2[(size_t)15*COUT+0], (int)C2[(size_t)15*COUT+1],
-           (int)C2[(size_t)15*COUT+2], (int)C2[(size_t)15*COUT+3]);
+    if (L > 5)
+        printf("C2[fila 5] col0..3 = %d %d %d %d  (esperado 60)\n",
+               (int)C2[(size_t)5*COUT+0], (int)C2[(size_t)5*COUT+1],
+               (int)C2[(size_t)5*COUT+2], (int)C2[(size_t)5*COUT+3]);
+    printf("C2[fila %d] col0..3 = %d %d %d %d  (esperado %d)\n", L-1,
+           (int)C2[(size_t)(L-1)*COUT+0], (int)C2[(size_t)(L-1)*COUT+1],
+           (int)C2[(size_t)(L-1)*COUT+2], (int)C2[(size_t)(L-1)*COUT+3],
+           CMID * ((L-1) % 8));
 
     printf("\n=== Fin baseline ===\n");
     return ok ? 0 : 1;
