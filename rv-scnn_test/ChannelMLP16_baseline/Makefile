@@ -13,7 +13,7 @@ CC := $(CV_SW_TOOLCHAIN)/bin/$(CV_SW_PREFIX)gcc
 SRC_DIR := .
 
 # Destination inside core-v-verif
-DST_DIR := /home/juan-prochazka/Desktop/RI5CY/RV-SCNN/core-v-verif/cv32e40p/tests/programs/custom/matvec_baseline32
+DST_DIR := /home/juan-prochazka/Desktop/RI5CY/RV-SCNN/core-v-verif/cv32e40p/tests/programs/custom/channelMLP16_baseline
 
 # All C files
 C_SRCS := $(wildcard $(SRC_DIR)/*.c)

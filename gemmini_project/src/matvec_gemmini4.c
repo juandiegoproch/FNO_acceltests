@@ -2,6 +2,9 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef BAREMETAL
+#include <sys/mman.h>
+#endif
 #include "include/gemmini_testutils.h"
 
 static inline uint64_t read_instret(void) {
@@ -10,66 +13,63 @@ static inline uint64_t read_instret(void) {
     return x;
 }
 
-int main(void) {
-    printf("=== Fast 4x4 single-shot GEMM (Gemmini) ===\n");
+#define MAX_M 32
+#define MAX_N 32
+#define MAX_K 32
 
-    // Same inputs as RV-SCNN test: A=identity, B=1..16
-    static elem_t A[16] __attribute__((aligned(64)));
-    static elem_t B[16] __attribute__((aligned(64)));
-    static elem_t C[16] __attribute__((aligned(64)));
+static elem_t  A[MAX_M * MAX_K] __attribute__((aligned(128)));
+static elem_t  B[MAX_K * MAX_N] __attribute__((aligned(128)));
+static acc_t   C[MAX_M * MAX_N] __attribute__((aligned(128)));
 
-    // A: identity (row-major, no row-flip needed — Gemmini handles layout)
-    A[ 0]=1; A[ 1]=0; A[ 2]=0; A[ 3]=0;
-    A[ 4]=0; A[ 5]=1; A[ 6]=0; A[ 7]=0;
-    A[ 8]=0; A[ 9]=0; A[10]=1; A[11]=0;
-    A[12]=0; A[13]=0; A[14]=0; A[15]=1;
+void instrument_accel(const char *name, int M, int N, int K) {
+    for (int i = 0; i < M*K; i++) A[i] = (i % 11) - 5;
+    for (int i = 0; i < K*N; i++) B[i] = (i % 9)  - 4;
+    for (int i = 0; i < M*N; i++) C[i] = 0;
 
-    // B: 1..16
-    B[ 0]=1;  B[ 1]=2;  B[ 2]=3;  B[ 3]=4;
-    B[ 4]=5;  B[ 5]=6;  B[ 6]=7;  B[ 7]=8;
-    B[ 8]=9;  B[ 9]=10; B[10]=11; B[11]=12;
-    B[12]=13; B[13]=14; B[14]=15; B[15]=16;
-
-    for (int i = 0; i < 16; i++) C[i] = 0;
-
+    // warmup
     gemmini_flush(0);
-
-    uint64_t c_start = read_cycles();
-    uint64_t i_start = read_instret();
-
-    // Single 4x4x4 GEMM: C = A * B
     tiled_matmul_auto(
-        4, 4, 4,            // dim_I, dim_J, dim_K
-        A, B, NULL, C,      // A, B, D(bias)=NULL, C
-        4, 4, 4, 4,         // stride_A, stride_B, stride_D, stride_C
+        M, N, K,
+        A, B, NULL, C,
+        K, N, N, N,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
         NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, true,
-        false, false,       // transpose_A, transpose_B
-        false, false,       // full_C, low_D
+        false, false,
+        false, false,
         0,
         WS);
-
     gemmini_fence();
 
-    uint64_t i_end = read_instret();
-    uint64_t c_end = read_cycles();
+    // measured run
+    gemmini_flush(0);
+    uint64_t c0 = read_cycles();
+    uint64_t i0 = read_instret();
 
-    printf("Cycles: %llu  Instructions: %llu\n",
-           (unsigned long long)(c_end - c_start),
-           (unsigned long long)(i_end - i_start));
+    tiled_matmul_auto(
+        M, N, K,
+        A, B, NULL, C,
+        K, N, N, N,
+        MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
+        NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, true,
+        false, false,
+        false, false,
+        0,
+        WS);
+    gemmini_fence();
 
-    // A=I so expected C=B, no row-flip needed
-    int ok = 1;
-    for (int r = 0; r < 4; r++)
-        for (int c = 0; c < 4; c++) {
-            int got      = (int)C[r*4+c];
-            int expected = (int)B[r*4+c];
-            printf("  C[%d][%d] = %4d  (expected %4d)%s\n",
-                   r, c, got, expected,
-                   got != expected ? "  <-- FAIL" : "");
-            if (got != expected) ok = 0;
-        }
+    uint64_t c1 = read_cycles();
+    uint64_t i1 = read_instret();
 
-    printf("Result: %s\n", ok ? "PASS" : "FAIL");
-    return ok ? 0 : 1;
+    printf("%s: cycles=%llu instret=%llu\n",
+        name,
+        (unsigned long long)(c1 - c0),
+        (unsigned long long)(i1 - i0));
+}
+
+int main(void) {
+    instrument_accel("4x4 * 4x4",    4,  4,  4);
+    instrument_accel("8x8 * 8x8",    8,  8,  8);
+    instrument_accel("16x16 * 16x16",16, 16, 16);
+    instrument_accel("32x32 * 32x32",32, 32, 32);
+    return 0;
 }

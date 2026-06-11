@@ -1,1 +1,0 @@
-This folder is to be put in the rv-scnn_test subdirectory of the RVSCNN folder. The makefiles are meant to put the .s files into the core-v-verif custom programs folder for rapid iteration. You will need to create the folder. This can be done by following the example given in the readme of the RVSCNN repo for conv_nn.c

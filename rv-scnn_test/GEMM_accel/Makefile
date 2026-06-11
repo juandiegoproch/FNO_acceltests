@@ -13,7 +13,7 @@ CC := $(CV_SW_TOOLCHAIN)/bin/$(CV_SW_PREFIX)gcc
 SRC_DIR := .
 
 # Destination inside core-v-verif
-DST_DIR := /home/juan-prochazka/Desktop/RI5CY/RV-SCNN/core-v-verif/cv32e40p/tests/programs/custom/matvec_accel16
+DST_DIR := /home/juan-prochazka/Desktop/RI5CY/RV-SCNN/core-v-verif/cv32e40p/tests/programs/custom/GEMM16_accel
 
 # All C files
 C_SRCS := $(wildcard $(SRC_DIR)/*.c)
@@ -43,7 +43,6 @@ compile:
 		echo "[CC] $$file"; \
 		$(CC) \
 			-S \
-			-O3 \
 			-DBAREMETAL \
 			-march=$(CV_SW_MARCH) \
 			-mabi=ilp32 \
