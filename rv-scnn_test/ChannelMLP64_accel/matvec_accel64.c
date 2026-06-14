@@ -119,11 +119,20 @@ int main(void) {
     printf("Accelerated matvec: %llu cycles, %llu instructions\n",
            (unsigned long long)cycles, (unsigned long long)instret);
 
+    printf("C1[fila1] col0..3 = %d %d %d %d  (esperado 1)\n",
+           (int)C1[1*CMID+0],(int)C1[1*CMID+1],(int)C1[1*CMID+2],(int)C1[1*CMID+3]);
+    printf("C1[fila7] col0..3 = %d %d %d %d  (esperado 7)\n",
+           (int)C1[7*CMID+0],(int)C1[7*CMID+1],(int)C1[7*CMID+2],(int)C1[7*CMID+3]);
+
     int ok = 1;
     for (int i = 0; i < L && ok; ++i) {
         elem_t expected = (elem_t)(CMID * (i % 8));
         for (int j = 0; j < COUT; ++j)
-            if (C2[(size_t)i * COUT + j] != expected) { ok = 0; break; }
+            if (C2[(size_t)i * COUT + j] != expected) {
+                printf("Primer fallo: i=%d j=%d esperado=%d obtenido=%d\n",
+                       i, j, (int)expected, (int)C2[(size_t)i*COUT+j]);
+                ok = 0; break;
+            }
     }
     printf("Verificacion HW: %s\n", ok ? "PASS" : "FAIL");
 
