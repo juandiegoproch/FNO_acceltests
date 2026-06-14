@@ -48,25 +48,27 @@ void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
     for (int ti = 0; ti < M / 4; ti++) {
         for (int tj = 0; tj < N / 4; tj++) {
 
-            /* Empaque de A: [K][4]. A es row-major [M][K] -> transponer:
-             * a_tile[k*4 + r] toma la columna k de la fila (ti*4 + r). */
             for (int k = 0; k < K; k++)
                 for (int r = 0; r < 4; r++)
                     a_tile[k * 4 + r] = A[(ti * 4 + r) * K + k];
 
-            /* Empaque de B: [K][4]. B ya es row-major [K][N]. */
             for (int k = 0; k < K; k++)
                 for (int c = 0; c < 4; c++)
                     b_tile[k * 4 + c] = B[k * N + tj * 4 + c];
 
+            /* Fila de pad EN CERO al final: el SAU filtra el ULTIMO producto
+             * parcial de un tile al siguiente. Si el ultimo MAC es 0*0, no se
+             * filtra nada, y el resultado del tile no cambia. */
+            for (int r = 0; r < 4; r++) a_tile[K * 4 + r] = 0;
+            for (int c = 0; c < 4; c++) b_tile[K * 4 + c] = 0;
+
             for (int i = 0; i < 16; i++) res_tile[i] = 0;
 
-            /* Una sola invocacion: el HW contrae sobre K. */
-            L_SCNN(K, 4, 4, 0);
+            L_SCNN(K + 1, 4, 4, 0);   /* K+1: la fila extra es el pad cero */
+            L_MODE(0, 1, 0, 0);
             SCNN4x4(a_tile, b_tile);
             SCNN_WB_INT((int *)res_tile);
 
-            /* Escritura con saturacion a int8. */
             for (int r = 0; r < 4; r++) {
                 for (int c = 0; c < 4; c++) {
                     int32_t v = res_tile[r * 4 + c];
