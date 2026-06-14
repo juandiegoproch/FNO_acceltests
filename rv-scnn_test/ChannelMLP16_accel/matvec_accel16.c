@@ -1,4 +1,3 @@
-
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -10,65 +9,70 @@
 #ifndef SZCH
 #define SZCH 16
 #endif
-#define L      (SZCH * SZCH)     
+#define L      (SZCH * SZCH)
 #define CIN0   24
 #define CMID   12
 #define COUT   24
 
 #define HEAP_SIZE (128 * 1024)
 
-// --- 1. THE HARDWARE PRIMITIVE (Black Box) ---
-typedef void (*gemm4x4_func)(int8_t *a_tile, int8_t *b_tile, int32_t *res_tile);
+/* K maximo de cualquier capa (CIN0=24, CMID=12). Dimensiona los tiles. */
+#define MAX_K 32
 
-void gemm4x4_hw(int8_t *a_tile, int8_t *b_tile, int32_t *res_tile) {
-    L_SCNN(4, 4, 4, 0); 
-    L_MODE(0, 1, 0, 0); 
-    SCNN4x4(a_tile, b_tile);
-    SCNN_WB_INT((int *)res_tile);
-}
+/* ============================================================
+ * Tiles del acelerador.
+ *   a_tile / b_tile: [K][4]  (la dimension K la consume el HW)
+ *   res_tile       : 4x4 = 16 resultados int32
+ * Alineados a 128 como en GEMM_accel/matvec_accel4.c.
+ * ============================================================ */
+static int8_t  a_tile[MAX_K * 4] __attribute__((aligned(128)));
+static int8_t  b_tile[MAX_K * 4] __attribute__((aligned(128)));
+static int32_t res_tile[16]      __attribute__((aligned(128)));
 
-// --- 2. THE ACCELERATED ORCHESTRATOR ---
-// Handles arbitrary M, N, K with virtual zero-padding for hardware safety
+/* ============================================================
+ * GEMM acelerado con K resuelto en hardware (patron matvec_accel4).
+ *
+ * El SAU 4x4 mas su LCU/ACU contraen TODA la dimension K en una sola
+ * llamada multicycle de SCNN4x4. El software solo recorre la salida en
+ * tiles de 4x4 (M y N). NO hay bucle de K ni acumulacion en software.
+ *
+ * Convenciones de layout (mismas que matvec_accel4.c salvo A):
+ *   A : row-major [M][K]  -> A[(fila)*K + k]   (ChannelMLP)  *transpuesto al empacar*
+ *   B : row-major [K][N]  -> B[k*N + col]
+ *   C : row-major [M][N]  -> C[(fila)*N + col], saturado a int8 (elem_t)
+ *
+ * Requiere M y N multiplos de 4 (en el ChannelMLP: L, CMID, COUT lo son).
+ * K es arbitrario (<= MAX_K); la maneja el hardware.
+ * ============================================================ */
 void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
-    static int8_t  a_tile[16]   __attribute__((aligned(128)));
-    static int8_t  b_tile[16]   __attribute__((aligned(128)));
-    static int32_t res_tile[16] __attribute__((aligned(128)));
+    for (int ti = 0; ti < M / 4; ti++) {
+        for (int tj = 0; tj < N / 4; tj++) {
 
-    for (int i = 0; i < M; i += 4) {
-        for (int j = 0; j < N; j += 4) {
-            int32_t acc[16] = {0};
+            /* Empaque de A: [K][4]. A es row-major [M][K] -> transponer:
+             * a_tile[k*4 + r] toma la columna k de la fila (ti*4 + r). */
+            for (int k = 0; k < K; k++)
+                for (int r = 0; r < 4; r++)
+                    a_tile[k * 4 + r] = A[(ti * 4 + r) * K + k];
 
-            for (int k = 0; k < K; k += 4) {
-                // Packing with bounds checking (Virtual Padding)
-                for (int tk = 0; tk < 4; tk++) {
-                    for (int ti = 0; ti < 4; ti++) {
-                        if ((i + ti) < M && (k + tk) < K)
-                            a_tile[tk * 4 + ti] = A[(i + ti) * K + (k + tk)];
-                        else
-                            a_tile[tk * 4 + ti] = 0;
-                    }
-                    for (int tj = 0; tj < 4; tj++) {
-                        if ((k + tk) < K && (j + tj) < N)
-                            b_tile[tk * 4 + tj] = B[(k + tk) * N + (j + tj)];
-                        else
-                            b_tile[tk * 4 + tj] = 0;
-                    }
-                }
+            /* Empaque de B: [K][4]. B ya es row-major [K][N]. */
+            for (int k = 0; k < K; k++)
+                for (int c = 0; c < 4; c++)
+                    b_tile[k * 4 + c] = B[k * N + tj * 4 + c];
 
-                gemm4x4_hw(a_tile, b_tile, res_tile);
+            for (int i = 0; i < 16; i++) res_tile[i] = 0;
 
-                for (int n = 0; n < 16; n++) acc[n] += res_tile[n];
-            }
+            /* Una sola invocacion: el HW contrae sobre K. */
+            L_SCNN(K, 4, 4, 0);
+            SCNN4x4(a_tile, b_tile);
+            SCNN_WB_INT((int *)res_tile);
 
-            // Stitching back with saturation and bounds checking
+            /* Escritura con saturacion a int8. */
             for (int r = 0; r < 4; r++) {
                 for (int c = 0; c < 4; c++) {
-                    if ((i + r) < M && (j + c) < N) {
-                        int32_t final_acc = acc[r * 4 + c];
-                        if (final_acc > 127) final_acc = 127;
-                        if (final_acc < -128) final_acc = -128;
-                        C[(i + r) * N + (j + c)] = (elem_t)final_acc;
-                    }
+                    int32_t v = res_tile[r * 4 + c];
+                    if (v > elem_t_max) v = elem_t_max;
+                    if (v < elem_t_min) v = elem_t_min;
+                    C[(ti * 4 + r) * N + (tj * 4 + c)] = (elem_t)v;
                 }
             }
         }
@@ -76,7 +80,7 @@ void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
 }
 
 int main(void) {
-    printf("=== Accelerated: matvec ChannelMLP (RV-SCNN) ===\n");
+    printf("=== Accelerated: matvec ChannelMLP (RV-SCNN, K en HW) ===\n");
     printf("SZCH=%d L=%d CIN0=%d CMID=%d COUT=%d\n\n", SZCH, L, CIN0, CMID, COUT);
 
     static uint8_t heap[HEAP_SIZE];
@@ -97,10 +101,10 @@ int main(void) {
     uint64_t c_start = read_cycles();
     uint64_t i_start = read_instret();
 
-    // Layer 1: L x CIN0 * CIN0 x CMID -> L x CMID
+    /* Capa 1: L x CIN0 * CIN0 x CMID -> L x CMID */
     GEMM_Accelerated(L, CMID, CIN0, A0, W1, C1);
-    
-    // Layer 2: L x CMID * CMID x COUT -> L x COUT
+
+    /* Capa 2: L x CMID * CMID x COUT -> L x COUT */
     GEMM_Accelerated(L, COUT, CMID, C1, W2, C2);
 
     uint64_t i_end = read_instret();
@@ -110,7 +114,6 @@ int main(void) {
     uint64_t instret = i_end - i_start;
     printf("Accelerated matvec: %llu cycles, %llu instructions\n",
            (unsigned long long)cycles, (unsigned long long)instret);
-
 
     int ok = 1;
     for (int i = 0; i < L && ok; ++i) {
