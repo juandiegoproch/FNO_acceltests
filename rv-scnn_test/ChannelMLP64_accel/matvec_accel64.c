@@ -124,6 +124,13 @@ int main(void) {
     printf("C1[fila7] col0..3 = %d %d %d %d  (esperado 7)\n",
            (int)C1[7*CMID+0],(int)C1[7*CMID+1],(int)C1[7*CMID+2],(int)C1[7*CMID+3]);
 
+    printf("C2[fila1] j0..7  = %d %d %d %d %d %d %d %d  (esperado todos 12)\n",
+           (int)C2[1*COUT+0],(int)C2[1*COUT+1],(int)C2[1*COUT+2],(int)C2[1*COUT+3],
+           (int)C2[1*COUT+4],(int)C2[1*COUT+5],(int)C2[1*COUT+6],(int)C2[1*COUT+7]);
+    printf("C2[fila2] j0..7  = %d %d %d %d %d %d %d %d  (esperado todos 24)\n",
+           (int)C2[2*COUT+0],(int)C2[2*COUT+1],(int)C2[2*COUT+2],(int)C2[2*COUT+3],
+           (int)C2[2*COUT+4],(int)C2[2*COUT+5],(int)C2[2*COUT+6],(int)C2[2*COUT+7]);
+
     int ok = 1;
     for (int i = 0; i < L && ok; ++i) {
         elem_t expected = (elem_t)(CMID * (i % 8));
