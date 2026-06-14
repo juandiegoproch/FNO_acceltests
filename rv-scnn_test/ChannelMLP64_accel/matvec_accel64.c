@@ -7,14 +7,18 @@
 
 
 #ifndef SZCH
-#define SZCH 32
+#define SZCH 64
 #endif
 #define L      (SZCH * SZCH)
 #define CIN0   24
 #define CMID   12
 #define COUT   24
 
-#define HEAP_SIZE (128 * 1024)
+/* Heap derivado de las dimensiones: misma formula que el baseline64.
+ * Cubre exactamente los cinco buffers del layout (A0,W1,C1,W2,C2) + 4096 B
+ * de margen. A L=4096 (SZCH=64) son 246336 B de datos + 4096 B = 250432 B
+ * (~245 KiB). */
+#define HEAP_SIZE ((L*CIN0 + CIN0*CMID + L*CMID + CMID*COUT + L*COUT) + 4096)
 
 /* K maximo de cualquier capa (CIN0=24, CMID=12). Dimensiona los tiles. */
 #define MAX_K 32
