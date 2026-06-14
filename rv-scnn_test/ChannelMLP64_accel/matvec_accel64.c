@@ -49,13 +49,6 @@ static int32_t res_tile[16]      __attribute__((aligned(128)));
  * K es arbitrario (<= MAX_K); la maneja el hardware.
  * ============================================================ */
 void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
-    /* Config UNA sola vez: K + tile 4x4, y modo CNN/entero tradicional.
-     * L_MODE(0,1,0,0) es lo que faltaba: pone el SAU en modo CNN entero (no
-     * spiking), igual que el test verificado gemm_cnn.c de RV-SCNN. Sin el,
-     * el SAU arrastra estado entre SCNN4x4 consecutivas y suma de mas. */
-    L_SCNN(K, 4, 4, 0);
-    L_MODE(0, 1, 0, 0);
-
     for (int ti = 0; ti < M / 4; ti++) {
         for (int tj = 0; tj < N / 4; tj++) {
 
@@ -69,6 +62,11 @@ void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
 
             for (int i = 0; i < 16; i++) res_tile[i] = 0;
 
+            /* Orden y modo del test verificado gemm_cnn.c: L_SCNN, luego L_MODE.
+             * L_MODE(0,1,0,0) = CNN entero (sin estado spiking). Por tile, para
+             * no asumir que la config persiste entre tiles. */
+            L_SCNN(K, 4, 4, 0);
+            L_MODE(0, 1, 0, 0);
             SCNN4x4(a_tile, b_tile);
             SCNN_WB_INT((int *)res_tile);
 
