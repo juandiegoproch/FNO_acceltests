@@ -1,117 +1,66 @@
 # ============================================================
-# RVSCNN baremetal build flow
+# RV-SCNN baremetal build flow (portatil)
+# ============================================================
+# Compila el .c de ESTA carpeta a ensamblador, lo deja como <TEST>.S,
+# crea el test en core-v-verif (con su test.yaml) y lo despliega.
+#
+# Uso (tras 'cd ~/RV-SCNN && source env.sh'):
+#   make            -> compila y despliega el .S al test de core-v-verif
+#   make run        -> ademas lanza 'make veri-test' en sim/core
+#   make clean      -> borra .s/.S locales
+#
+# Variables sobreescribibles (p. ej. para otra maquina/usuario):
+#   make RVSCNN_ROOT=/ruta/a/RV-SCNN
+#   make TEST_NAME=mi_nombre_de_test
 # ============================================================
 
-# Toolchain
-export CV_SW_TOOLCHAIN := /opt/riscv
-export CV_SW_PREFIX    := riscv32-unknown-elf-
-export CV_SW_MARCH     := rv32imc_zicsr
+# Raiz del repo RV-SCNN (por defecto ~/RV-SCNN). Otro layout: pasar RVSCNN_ROOT=...
+RVSCNN_ROOT ?= $(HOME)/RV-SCNN
 
-CC := $(CV_SW_TOOLCHAIN)/bin/$(CV_SW_PREFIX)gcc
+# Nombre del test = nombre de esta carpeta. El folder, el .S y el TEST coinciden.
+TEST_NAME   ?= $(notdir $(CURDIR))
 
-# Source directory
-SRC_DIR := .
+# Toolchain: tras 'source env.sh' esta en el PATH (no hardcodear /opt/...).
+CC          ?= riscv32-corev-elf-gcc
+MARCH       ?= rv32imc_zicsr
+MABI        ?= ilp32
 
-# Destination inside core-v-verif
-DST_DIR := /home/juan-prochazka/Desktop/RI5CY/RV-SCNN/core-v-verif/cv32e40p/tests/programs/custom/channelMLP16_accel
+# Rutas dentro de core-v-verif
+CUSTOM_DIR  := $(RVSCNN_ROOT)/core-v-verif/cv32e40p/tests/programs/custom
+DST_DIR     := $(CUSTOM_DIR)/$(TEST_NAME)
+SIM_DIR     := $(RVSCNN_ROOT)/core-v-verif/cv32e40p/sim/core
 
-# All C files
-C_SRCS := $(wildcard $(SRC_DIR)/*.c)
+# Fuente C de esta carpeta (se espera exactamente uno)
+SRC         := $(firstword $(wildcard *.c))
 
-# Generated .s files
-ASM_SRCS := $(C_SRCS:.c=.s)
+# ------------------------------------------------------------
+.PHONY: all compile deploy run clean
+all: deploy
 
-# Generated .S files
-CAP_ASM := $(C_SRCS:.c=.S)
+# Compila el .c -> <TEST>.S (capital S, imprescindible para core-v-verif).
+# -DBAREMETAL es OBLIGATORIO para el baseline (evita sys/mman + mlockall);
+# inofensivo para el accel.
+compile: $(SRC)
+	@echo "[CC] $(SRC) -> $(TEST_NAME).S"
+	$(CC) -S -O3 -DBAREMETAL -march=$(MARCH) -mabi=$(MABI) $(SRC) -o $(TEST_NAME).s
+	@mv $(TEST_NAME).s $(TEST_NAME).S
 
-# ============================================================
-# Default target
-# ============================================================
+# Crea la carpeta del test, le pone test.yaml (de hello-world) si falta,
+# limpia restos y copia el .S.
+deploy: compile
+	@echo "[DEPLOY] -> $(DST_DIR)"
+	@mkdir -p $(DST_DIR)
+	@if [ ! -f "$(DST_DIR)/test.yaml" ]; then \
+		cp "$(CUSTOM_DIR)/hello-world/test.yaml" "$(DST_DIR)/"; \
+		echo "[YAML] copiado test.yaml de hello-world"; \
+	fi
+	@find "$(DST_DIR)" -type f ! -name '*.S' ! -name 'test.yaml' -delete 2>/dev/null || true
+	@cp $(TEST_NAME).S "$(DST_DIR)/"
+	@echo "[OK] $(TEST_NAME).S desplegado. Corre: make run  (o cd $(SIM_DIR) && make veri-test TEST=$(TEST_NAME))"
 
-all: compile rename deploy clean_local
-
-# ============================================================
-# Compile .c -> .s
-# ============================================================
-
-compile:
-	@echo "========================================"
-	@echo "Compiling C -> assembly"
-	@echo "========================================"
-
-	@for file in $(C_SRCS); do \
-		echo "[CC] $$file"; \
-		$(CC) \
-			-S \
-			-O3 \
-			-DBAREMETAL \
-			-march=$(CV_SW_MARCH) \
-			-mabi=ilp32 \
-			$$file; \
-	done
-
-# ============================================================
-# Rename .s -> .S
-# ============================================================
-
-rename:
-	@echo ""
-	@echo "========================================"
-	@echo "Renaming .s -> .S"
-	@echo "========================================"
-
-	@for file in $(ASM_SRCS); do \
-		newfile=`echo $$file | sed 's/\.s$$/.S/'`; \
-		echo "[MV] $$file -> $$newfile"; \
-		mv $$file $$newfile; \
-	done
-
-# ============================================================
-# Clean destination except .S and test.yaml
-# ============================================================
-
-clean_dst:
-	@echo ""
-	@echo "========================================"
-	@echo "Cleaning destination folder"
-	@echo "========================================"
-
-	@find $(DST_DIR) \
-		-type f \
-		! -name "*.S" \
-		! -name "test.yaml" \
-		-delete
-
-# ============================================================
-# Deploy .S files
-# ============================================================
-
-deploy: clean_dst
-	@echo ""
-	@echo "========================================"
-	@echo "Copying .S files"
-	@echo "========================================"
-
-	@for file in $(CAP_ASM); do \
-		echo "[CP] $$file -> $(DST_DIR)"; \
-		cp $$file $(DST_DIR)/; \
-	done
-
-# ============================================================
-# Optional local cleanup
-# ============================================================
-
-clean_local:
-	@echo ""
-	@echo "========================================"
-	@echo "Removing local generated .S files"
-	@echo "========================================"
-
-	@rm -f *.S
-
-# ============================================================
-# Full cleanup
-# ============================================================
+# Lanza la simulacion Verilator del test.
+run: deploy
+	$(MAKE) -C $(SIM_DIR) veri-test TEST=$(TEST_NAME)
 
 clean:
-	rm -f *.s *.S
+	@rm -f *.s *.S
