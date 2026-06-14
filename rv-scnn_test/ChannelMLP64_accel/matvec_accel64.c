@@ -60,12 +60,15 @@ void GEMM_Accelerated(int M, int N, int K, elem_t *A, elem_t *B, elem_t *C) {
                 for (int c = 0; c < 4; c++)
                     b_tile[k * 4 + c] = B[k * N + tj * 4 + c];
 
+            /* Fila de pad EN CERO al final: el SAU filtra el ULTIMO producto
+             * parcial de un tile al siguiente. Si el ultimo MAC es 0*0, no se
+             * filtra nada, y el resultado del tile no cambia. */
+            for (int r = 0; r < 4; r++) a_tile[K * 4 + r] = 0;
+            for (int c = 0; c < 4; c++) b_tile[K * 4 + c] = 0;
+
             for (int i = 0; i < 16; i++) res_tile[i] = 0;
 
-            /* Orden y modo del test verificado gemm_cnn.c: L_SCNN, luego L_MODE.
-             * L_MODE(0,1,0,0) = CNN entero (sin estado spiking). Por tile, para
-             * no asumir que la config persiste entre tiles. */
-            L_SCNN(K, 4, 4, 0);
+            L_SCNN(K + 1, 4, 4, 0);   /* K+1: la fila extra es el pad cero */
             L_MODE(0, 1, 0, 0);
             SCNN4x4(a_tile, b_tile);
             SCNN_WB_INT((int *)res_tile);
