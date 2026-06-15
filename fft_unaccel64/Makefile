@@ -5,7 +5,7 @@ OBJDUMP = riscv64-unknown-elf-objdump
 
 # Project files
 SRCS   = main.c
-TARGET = program.riscv
+TARGET = fftunaccel64.riscv
 
 # KissFFT Paths
 # Reuse the existing library copy from fft_unaccel/ (no duplicate kissfft tree)
@@ -16,7 +16,7 @@ KISS_LIB = $(KISS_DIR)/libkissfft-int32_t.a
 # REMOVED -specs from here so it isn't parsed twice
 CFLAGS  = -march=rv64imafdc -mabi=lp64d -mcmodel=medany \
           -O0 -Wall -g -fno-common \
-          -I$(KISS_DIR) \
+          -I$(KISS_DIR) -I$(KISS_DIR)/.. \
           -DFIXED_POINT=32 \
           -DKISS_FFT_MALLOC=malloc_is_forbidden \
           -Ukiss_fft_free -Dkiss_fft_free\(ptr\)=

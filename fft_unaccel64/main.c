@@ -79,7 +79,9 @@ int main() {
     asm volatile ("fence" ::: "memory");
 
     for (int c=0; c<CHANNEL_COUNT; c++){
+	printf("Performing FFT on channel %d",c);
         kiss_fftndr(channel_fft_config,(int32_t*)&channels_buffer[c],(kiss_fft_cpx*)&channels_buffer_fft[c]);
+	printf("Performing IFFT on channel %d",c);
         kiss_fftndri(channel_ifft_config,(kiss_fft_cpx*)&channels_buffer_fft[c],(int32_t*)&channels_buffer[c]);
     }
 

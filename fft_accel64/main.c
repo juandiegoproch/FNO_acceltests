@@ -8,7 +8,7 @@
 #define FALSE 0
 #define ONE_DIM_FFT_SIZE 0
 
-// You can now change this to 16, 8, etc. The HW will handle it via zero-padding.
+// You can now change this to 16, 8, etc. The HW will handle it via zero-padding
 #define CHANNEL_SIZE 64
 #define CHANNEL_COUNT 24
 #define SCRATCHPAD_BUFFER_SIZE 62000
@@ -53,6 +53,7 @@ void populateChannel(cpx_32bq16_accel* channel){
 }
 
 int main() {
+    printf("Running 64x64 FFT instruction");
     uint64_t instructions_start, instructions_end;
     uint64_t clock_cycles_start, clock_cycles_end;
 
@@ -91,11 +92,16 @@ int main() {
     asm volatile ("rdinstret %0" : "=r" (instructions_start));
     asm volatile ("fence" ::: "memory");
 
-    for (int c=0; c<CHANNEL_COUNT; c++){
-        //kiss_fftndr(channel_fft_config,(int32_t*)&channels_buffer[c],(kiss_fft_cpx*)&channels_buffer_fft[c]);
-        //kiss_fftndri(channel_ifft_config,(kiss_fft_cpx*)&channels_buffer_fft[c],(int32_t*)&channels_buffer[c]);
+    for (int c=0; c<CHANNEL_COUNT; c++) {
+        printf("channel %d: FFT start\n", c);
+
         fft64x64_32bq16_accel(channels_buffer[c]);
+
+        printf("channel %d: FFT done\n", c);
+
         ifft64x64_32bq16_accel(channels_buffer[c]);
+
+        printf("channel %d: IFFT done\n", c);
     }
 
     asm volatile ("fence" ::: "memory");
