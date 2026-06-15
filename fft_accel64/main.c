@@ -91,11 +91,16 @@ int main() {
     asm volatile ("rdinstret %0" : "=r" (instructions_start));
     asm volatile ("fence" ::: "memory");
 
-    for (int c=0; c<CHANNEL_COUNT; c++){
-        //kiss_fftndr(channel_fft_config,(int32_t*)&channels_buffer[c],(kiss_fft_cpx*)&channels_buffer_fft[c]);
-        //kiss_fftndri(channel_ifft_config,(kiss_fft_cpx*)&channels_buffer_fft[c],(int32_t*)&channels_buffer[c]);
+    for (int c=0; c<CHANNEL_COUNT; c++) {
+        printf("channel %d: FFT start\n", c);
+
         fft64x64_32bq16_accel(channels_buffer[c]);
+
+        printf("channel %d: FFT done\n", c);
+
         ifft64x64_32bq16_accel(channels_buffer[c]);
+
+        printf("channel %d: IFFT done\n", c);
     }
 
     asm volatile ("fence" ::: "memory");
