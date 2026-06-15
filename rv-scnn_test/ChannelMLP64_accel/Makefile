@@ -21,7 +21,7 @@ RVSCNN_ROOT ?= $(HOME)/RV-SCNN
 TEST_NAME   ?= $(notdir $(CURDIR))
 
 # Toolchain: tras 'source env.sh' esta en el PATH (no hardcodear /opt/...).
-CC          ?= riscv32-corev-elf-gcc
+CC := riscv32-corev-elf-gcc
 MARCH       ?= rv32imc_zicsr
 MABI        ?= ilp32
 
