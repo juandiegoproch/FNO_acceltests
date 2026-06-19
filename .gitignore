@@ -5,3 +5,7 @@
 # Block RISC-V specific binaries and execution ELFs
 *.riscv
 *.elf
+
+# large data files
+
+/data/*.pt
