@@ -1,17 +1,6 @@
-/* conv1d.c - implementaciones bare-metal, sin malloc.
- *
- * Layout: x[L][Cin]  (channels-last, HWC reinterpretado como LC).
- *         y[Lout][Cout]
- *         W[Cout][Cin][K]  (igual que PyTorch)
- *
- * Para [n][n][24] reinterpretado como [n*n][24], cada posición espacial
- * tiene los Cin canales contiguos en memoria. Esto convierte el inner loop
- * sobre canales en un dot-product sobre memoria contigua: ideal para
- * vectorización automática del compilador y prefetch.
- */
 #include "conv1d.h"
 
-/* ---------- Helpers de saturación para fixed-point ----------------------- */
+
 static inline int16_t sat_i16(int32_t v) {
     if (v >  32767) return  32767;
     if (v < -32768) return -32768;
@@ -23,22 +12,12 @@ static inline int8_t sat_i8(int32_t v) {
     return (int8_t)v;
 }
 
-/* Rounding shift right: equivalente a CMSIS-NN __SSAT(round(x * 2^-n)).
- * Suma 0.5 ULP antes de desplazar para redondeo correcto al más cercano. */
 static inline int32_t rshift_round(int32_t v, int n) {
     if (n <= 0) return v;
     int32_t bias = (int32_t)1 << (n - 1);
-    /* Cuidado con overflow: v + bias podría desbordar. En práctica el
-     * acumulador ya es int32 y los productos quedan dentro del rango. */
     return (v + bias) >> n;
 }
 
-/* ===========================================================================
- *  Macro-template: el mismo cuerpo se instancia para f32 / q15 / q7.
- *  Esto es exactamente el patrón que CMSIS-DSP usa internamente.
- * =========================================================================== */
-
-/* ---------- Float32: caso general ---------------------------------------- */
 void conv1d_f32(const float *x, int L, int Cin,
                 const float *W, int Cout, int K,
                 const float *bias,
@@ -72,12 +51,6 @@ void conv1d_f32(const float *x, int L, int Cin,
         }
     }
 }
-
-/* ---------- Float32: K=1 (pointwise) -------------------------------------
- * Es matemáticamente Y = X · W^T + b, donde X es (L,Cin), W es (Cout,Cin),
- * Y es (L,Cout). Como Cin es contiguo en x[l][:] y en W[co][:], cada
- * salida es un dot-product de Cin elementos contiguos: cache-óptimo.
- */
 void conv1d_k1_f32(const float *x, int L, int Cin,
                    const float *W, int Cout,
                    const float *bias,
@@ -102,7 +75,6 @@ void conv1d_k1_f32(const float *x, int L, int Cin,
     }
 }
 
-/* ---------- Q15 (int16): caso general ------------------------------------ */
 void conv1d_q15(const int16_t *x, int L, int Cin,
                 const int16_t *W, int Cout, int K,
                 const int32_t *bias,
@@ -117,8 +89,7 @@ void conv1d_q15(const int16_t *x, int L, int Cin,
         int16_t *yrow = &y[(size_t)lo * Cout];
 
         for (int co = 0; co < Cout; ++co) {
-            /* Acumulador int64 para máxima seguridad ante Cin*K grandes.
-             * Para Cin*K <= 2^17 con valores Q1.15, int32 también basta. */
+
             int64_t acc = bias ? (int64_t)bias[co] : 0;
             const int16_t *Wco = &W[(size_t)co * Cin * K];
 
@@ -129,8 +100,6 @@ void conv1d_q15(const int16_t *x, int L, int Cin,
                 const int16_t *xrow = &x[(size_t)li * Cin];
 
                 for (int ci = 0; ci < Cin; ++ci) {
-                    /* (int32_t) cast asegura multiplicación de 32 bits en arquitecturas
-                     * donde int es 16 bits (raro hoy, pero portable). */
                     acc += (int32_t)xrow[ci] * (int32_t)Wco[ci * K + k];
                 }
             }
@@ -138,8 +107,6 @@ void conv1d_q15(const int16_t *x, int L, int Cin,
         }
     }
 }
-
-/* ---------- Q15: K=1 ------------------------------------------------------ */
 void conv1d_k1_q15(const int16_t *x, int L, int Cin,
                    const int16_t *W, int Cout,
                    const int32_t *bias,
@@ -162,7 +129,6 @@ void conv1d_k1_q15(const int16_t *x, int L, int Cin,
     }
 }
 
-/* ---------- Q7 (int8): caso general -------------------------------------- */
 void conv1d_q7(const int8_t *x, int L, int Cin,
                const int8_t *W, int Cout, int K,
                const int32_t *bias,
@@ -194,8 +160,6 @@ void conv1d_q7(const int8_t *x, int L, int Cin,
         }
     }
 }
-
-/* ---------- Q7: K=1 ------------------------------------------------------- */
 void conv1d_k1_q7(const int8_t *x, int L, int Cin,
                   const int8_t *W, int Cout,
                   const int32_t *bias,

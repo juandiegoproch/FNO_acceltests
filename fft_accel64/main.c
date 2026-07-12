@@ -2,13 +2,13 @@
 #include <stdint.h>
 #include <stdalign.h>
 #include <stdlib.h>
-#include "accelerator_fft.h" // Swapped kissfft headers for your hardware header
+#include "accelerator_fft.h" 
 
 #define TRUE 1
 #define FALSE 0
 #define ONE_DIM_FFT_SIZE 0
 
-// You can now change this to 16, 8, etc. The HW will handle it via zero-padding
+
 #define CHANNEL_SIZE 64
 #define CHANNEL_COUNT 24
 #define SCRATCHPAD_BUFFER_SIZE 62000
@@ -31,20 +31,15 @@ void* malloc_is_forbidden(size_t size) {
     return NULL;
 }
 
-// Minimal change: Just cast to the new struct type
 void populateChannel(cpx_32bq16_accel* channel){
     for (int r = 0; r < HW_DIM; r++) {
         for (int c = 0; c < HW_DIM; c++) {
             int hw_index = r * HW_DIM + c;
-
-            // Map the smaller CHANNEL_SIZE into the fixed 64x64 hardware window
             if (r < CHANNEL_SIZE && c < CHANNEL_SIZE) {
-                // Original logic: (i + j) << FIXED_POINT_SHIFT
                 int32_t val = (r + c) << FIXED_POINT_SHIFT;
                 channel[hw_index].r = (uint32_t)val;
                 channel[hw_index].i = 0;
             } else {
-                // Zero-pad the remaining hardware capacity to prevent stalls
                 channel[hw_index].r = 0;
                 channel[hw_index].i = 0;
             }
@@ -66,7 +61,7 @@ int main() {
     asm volatile ("rdinstret %0" : "=r" (instructions_start));
     asm volatile ("fence" ::: "memory");
 
-    // kiss_fftndr_alloc calls commented out (Zero changes to the surrounding prints)
+    // kiss_fftndr_alloc calls commented out
     /*
     kiss_fftndr_cfg channel_fft_config = kiss_fftndr_alloc(dims,2,FALSE,fft_scratchpad,&scratchpad_size);
     kiss_fftndr_cfg channel_ifft_config = kiss_fftndr_alloc(dims,2,TRUE,ifft_scratchpad,&scratchpad_size);
